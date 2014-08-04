@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha1"
 	"flag"
 	"fmt"
 	"github.com/gorilla/mux"
@@ -19,6 +20,7 @@ func main() {
 
 	imageserver.Port = *flag.Int("port", 9999, "the port number of the imageserver")
 	imageserver.ImagesPath = *flag.String("imagespath", "images", "path to the images directory")
+	imageserver.CachePath = *flag.String("cachepath", "cache", "path to the cache directory")
 
 	flag.Parse()
 
@@ -28,6 +30,7 @@ func main() {
 
 type ImageServer struct {
 	ImagesPath     string
+	CachePath      string
 	Port           int
 	ImageFileTypes []string
 }
@@ -100,6 +103,29 @@ func (is *ImageServer) ImageHandler(writer http.ResponseWriter, request *http.Re
 	}
 	defer file.Close()
 
+	fileInfo, err := file.Stat()
+	if err != nil {
+
+		log.Printf("get file stats failed: %s\n", err.Error())
+
+		writer.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(writer, "internal server error")
+
+		return
+	}
+
+	data := []byte(fmt.Sprintf("%s%s%s%d", imagePath, fileInfo.Name(), fileInfo.Size(), fileInfo.ModTime().Unix()))
+	hashValue := sha1.Sum(data)
+
+	cacheImagePath := fmt.Sprintf("cache/%x-%dx%d", hashValue, width, height)
+
+	_, err = os.Stat(cacheImagePath)
+	if err == nil {
+
+		http.ServeFile(writer, request, cacheImagePath)
+		return
+	}
+
 	image, err := jpeg.Decode(file)
 	if err != nil {
 
@@ -142,5 +168,30 @@ func (is *ImageServer) ImageHandler(writer http.ResponseWriter, request *http.Re
 	}
 
 	resizedImage := resize.Resize(width, height, image, resize.Lanczos3)
-	jpeg.Encode(writer, resizedImage, nil)
+
+	fileInCache, err := os.Create(cacheImagePath)
+	if err != nil {
+
+		log.Printf("create cached file failed: %s\n", err.Error())
+
+		writer.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(writer, "internal server error")
+
+		return
+	}
+	defer fileInCache.Close()
+
+	err = jpeg.Encode(fileInCache, resizedImage, nil)
+	if err != nil {
+
+		log.Printf("write cached file failed: %s\n", err.Error())
+
+		writer.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(writer, "internal server error")
+
+		return
+	}
+
+	http.ServeFile(writer, request, cacheImagePath)
+	return
 }
