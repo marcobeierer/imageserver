@@ -117,12 +117,13 @@ func (is *ImageServer) ImageHandler(writer http.ResponseWriter, request *http.Re
 	data := []byte(fmt.Sprintf("%s%s%s%d", imagePath, fileInfo.Name(), fileInfo.Size(), fileInfo.ModTime().Unix()))
 	hashValue := sha1.Sum(data)
 
-	cacheImagePath := fmt.Sprintf("cache/%x-%dx%d", hashValue, width, height)
+	cacheImagePath := fmt.Sprintf("%s/%s/%x", is.CachePath, request.URL.Path[1:], hashValue)
+	cacheImageFilePath := fmt.Sprintf("%s/%dx%d", cacheImagePath, width, height)
 
-	_, err = os.Stat(cacheImagePath)
+	_, err = os.Stat(cacheImageFilePath)
 	if err == nil {
 
-		http.ServeFile(writer, request, cacheImagePath)
+		http.ServeFile(writer, request, cacheImageFilePath)
 		return
 	}
 
@@ -169,7 +170,18 @@ func (is *ImageServer) ImageHandler(writer http.ResponseWriter, request *http.Re
 
 	resizedImage := resize.Resize(width, height, image, resize.Lanczos3)
 
-	fileInCache, err := os.Create(cacheImagePath)
+	err = os.MkdirAll(cacheImagePath, os.ModePerm)
+	if err != nil {
+
+		log.Printf("make cached file directory failed: %s\n", err.Error())
+
+		writer.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(writer, "internal server error")
+
+		return
+	}
+
+	fileInCache, err := os.Create(cacheImageFilePath)
 	if err != nil {
 
 		log.Printf("create cached file failed: %s\n", err.Error())
@@ -192,6 +204,6 @@ func (is *ImageServer) ImageHandler(writer http.ResponseWriter, request *http.Re
 		return
 	}
 
-	http.ServeFile(writer, request, cacheImagePath)
+	http.ServeFile(writer, request, cacheImageFilePath)
 	return
 }
